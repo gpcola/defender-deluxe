@@ -1,0 +1,1653 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Defender Deluxe</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<!-- Open Graph for Reddit -->
+<meta property="og:title" content="Defender Deluxe">
+<meta property="og:description" content="A Reddit-native remake of the 80s arcade classic Defender. Daily targets, ghosts, and real-time duels.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://gpcola.github.io/defender-deluxe/">
+
+<style>
+html,body{
+  margin:0;
+  background:#02040a;
+  color:#cfe0ff;
+  font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+}
+canvas{display:block}
+#ui{
+  position:fixed;
+  top:10px;
+  left:10px;
+  z-index:10;
+}
+button{
+  background:#0b1222;
+  color:#cfe0ff;
+  border:1px solid #24325a;
+  padding:6px 10px;
+  margin:2px;
+  cursor:pointer;
+}
+</style>
+</head>
+
+<body>
+<div id="ui">
+  <button id="btnPlay">Play</button>
+  <button id="btnDaily">Daily</button>
+  <button id="btnTime">Time Attack</button>
+</div>
+
+<canvas id="c"></canvas>
+
+<script>
+(() => {
+  // =========================
+  // Repo config (yours)
+  // =========================
+  const GITHUB_OWNER = "gpcola";
+  const GITHUB_REPO  = "defender-deluxe";
+  const REPO_PAGES_URL = `https://${GITHUB_OWNER}.github.io/${GITHUB_REPO}/`;
+
+  // Reddit usernames typically have no spaces; change if needed:
+  const REDDIT_USERNAME_DEFAULT = "PowerTarget";
+
+  const DEV_NAME = "PowerTarget";
+  const DEV_TARGET_SCORE = 7200; // update once you’ve set a real daily score
+  const TIME_ATTACK_SECONDS = 120;
+
+  // =========================
+  // DOM
+  // =========================
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d", { alpha: false });
+
+  const drawer = document.getElementById("drawer");
+  const lbEl = document.getElementById("lb");
+
+  const btnPlay = document.getElementById("btnPlay");
+  const btnDaily = document.getElementById("btnDaily");
+  const btnTime = document.getElementById("btnTime");
+  const btnDuel = document.getElementById("btnDuel");
+  const btnShare = document.getElementById("btnShare");
+  const btnOptions = document.getElementById("btnOptions");
+  const btnClose = document.getElementById("btnClose");
+
+  const inpReddit = document.getElementById("inpReddit");
+  const togSound = document.getElementById("togSound");
+  const togCRT = document.getElementById("togCRT");
+  const togMotion = document.getElementById("togMotion");
+  const togTouch = document.getElementById("togTouch");
+
+  const btnRefreshLB = document.getElementById("btnRefreshLB");
+
+  const btnClip = document.getElementById("btnClip");
+  const btnHost = document.getElementById("btnHost");
+  const btnJoin = document.getElementById("btnJoin");
+  const btnSetRemote = document.getElementById("btnSetRemote");
+  const btnEndDuel = document.getElementById("btnEndDuel");
+  const mpCode = document.getElementById("mpCode");
+  const mpStatus = document.getElementById("mpStatus");
+
+  // Touch pad elements (optional in your scaffold—only use if present)
+  const touchPad = document.getElementById("touchPad");
+  const touchHint = document.getElementById("touchHint");
+
+  // =========================
+  // Canvas sizing
+  // =========================
+  function resize() {
+    const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    canvas.width  = Math.floor(innerWidth * dpr);
+    canvas.height = Math.floor(innerHeight * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  addEventListener("resize", resize);
+  resize();
+
+  // =========================
+  // Helpers
+  // =========================
+  const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+  const wrap = (x,w)=>((x%w)+w)%w;
+  const rand = (a,b)=>a+Math.random()*(b-a);
+  const dist2 = (ax,ay,bx,by)=>{ const dx=ax-bx, dy=ay-by; return dx*dx+dy*dy; };
+  function wrapDx(dx, worldW){ if(dx> worldW/2) dx-=worldW; if(dx<-worldW/2) dx+=worldW; return dx; }
+  function safeJson(s){ try { return JSON.parse(s); } catch { return null; } }
+  function setBtn(el, txt){ if(el) el.textContent = txt; }
+
+  // =========================
+  // Settings (localStorage)
+  // =========================
+  const LS_KEY = "defender_deluxe_settings_v2";
+  const defaultSettings = {
+    redditName: REDDIT_USERNAME_DEFAULT,
+    sound: true,
+    crt: true,
+    reduceMotion: false,
+    touch: "auto" // auto | on | off
+  };
+  const settings = { ...defaultSettings, ...(safeJson(localStorage.getItem(LS_KEY))||{}) };
+  function saveSettings(){ localStorage.setItem(LS_KEY, JSON.stringify(settings)); }
+
+  if (inpReddit) inpReddit.value = settings.redditName || "";
+  if (togSound) setBtn(togSound, settings.sound ? "On":"Off");
+  if (togCRT) setBtn(togCRT, settings.crt ? "On":"Off");
+  if (togMotion) setBtn(togMotion, settings.reduceMotion ? "On":"Off");
+  if (togTouch) setBtn(togTouch, (settings.touch||"auto").toUpperCase());
+
+  if (btnOptions) btnOptions.onclick = ()=>drawer?.classList.toggle("open");
+  if (btnClose) btnClose.onclick = ()=>drawer?.classList.remove("open");
+
+  if (inpReddit) inpReddit.oninput = ()=>{ settings.redditName = inpReddit.value.trim(); saveSettings(); };
+
+  if (togSound) togSound.onclick = ()=>{ settings.sound=!settings.sound; setBtn(togSound, settings.sound?"On":"Off"); saveSettings(); };
+  if (togCRT) togCRT.onclick = ()=>{ settings.crt=!settings.crt; setBtn(togCRT, settings.crt?"On":"Off"); saveSettings(); };
+  if (togMotion) togMotion.onclick = ()=>{ settings.reduceMotion=!settings.reduceMotion; setBtn(togMotion, settings.reduceMotion?"On":"Off"); saveSettings(); };
+  if (togTouch) togTouch.onclick = ()=>{
+    settings.touch = (settings.touch==="auto") ? "on" : (settings.touch==="on" ? "off":"auto");
+    setBtn(togTouch, settings.touch.toUpperCase());
+    applyTouchMode();
+    saveSettings();
+  };
+
+  // =========================
+  // Touch controls (optional)
+  // =========================
+  const touchState = { left:false,right:false,thrust:false,fire:false,bomb:false,hyper:false };
+  function isTouchDevice(){ return (navigator.maxTouchPoints||0)>0 || "ontouchstart" in window; }
+  function applyTouchMode(){
+    if(!touchPad || !touchHint) return;
+    const show = (settings.touch==="on") || (settings.touch==="auto" && isTouchDevice());
+    touchPad.classList.toggle("show", show);
+    touchHint.classList.toggle("show", show);
+    if (show) setTimeout(()=>touchHint.classList.remove("show"), 3500);
+    if (!show) Object.keys(touchState).forEach(k=>touchState[k]=false);
+  }
+  applyTouchMode();
+
+  function bindTouchBtn(id, key){
+    const el = document.getElementById(id);
+    if(!el) return;
+    const set = (v)=>{ touchState[key]=v; el.classList.toggle("active", v); };
+    el.addEventListener("pointerdown",(e)=>{ set(true); ensureAudio(); e.preventDefault(); },{passive:false});
+    el.addEventListener("pointerup",()=>set(false));
+    el.addEventListener("pointercancel",()=>set(false));
+    el.addEventListener("pointerleave",()=>set(false));
+  }
+  // Only binds if those IDs exist in your HTML
+  bindTouchBtn("tLeft","left");
+  bindTouchBtn("tRight","right");
+  bindTouchBtn("tThrust","thrust");
+  bindTouchBtn("tFire","fire");
+  bindTouchBtn("tBomb","bomb");
+  bindTouchBtn("tHyper","hyper");
+
+  // =========================
+  // PWA (optional)
+  // =========================
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(()=>{});
+
+  // =========================
+  // Audio (WebAudio)
+  // =========================
+  let audioCtx=null, masterGain=null;
+  function ensureAudio(){
+    if(!settings.sound) return;
+    if(audioCtx) return;
+    audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+    masterGain = audioCtx.createGain();
+    masterGain.gain.value = 0.22;
+    masterGain.connect(audioCtx.destination);
+  }
+  function beep(freq=440, dur=0.06, type="square", gain=0.6){
+    if(!settings.sound || !audioCtx) return;
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = type; o.frequency.value = freq;
+    g.gain.value = 0.0001;
+    o.connect(g); g.connect(masterGain);
+    const t=audioCtx.currentTime;
+    g.gain.setValueAtTime(0.0001,t);
+    g.gain.exponentialRampToValueAtTime(gain,t+0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+    o.start(t); o.stop(t+dur+0.02);
+  }
+  function noiseBurst(dur=0.12,gain=0.5){
+    if(!settings.sound || !audioCtx) return;
+    const n = Math.floor(audioCtx.sampleRate*dur);
+    const buf = audioCtx.createBuffer(1,n,audioCtx.sampleRate);
+    const d = buf.getChannelData(0);
+    for(let i=0;i<n;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/n,2);
+    const src=audioCtx.createBufferSource(); src.buffer=buf;
+    const g=audioCtx.createGain(); g.gain.value=gain;
+    src.connect(g); g.connect(masterGain);
+    src.start();
+  }
+  addEventListener("pointerdown",()=>{ ensureAudio(); audioCtx?.state==="suspended" && audioCtx.resume(); },{once:true});
+  addEventListener("keydown",()=>{ ensureAudio(); audioCtx?.state==="suspended" && audioCtx.resume(); },{once:true});
+
+  // =========================
+  // Input (keyboard)
+  // =========================
+  const keys=new Set();
+  let paused=false;
+  addEventListener("keydown",(e)=>{
+    if(e.code==="KeyP") paused=!paused;
+    if(e.code==="KeyO") drawer?.classList.toggle("open");
+    keys.add(e.code);
+    if(["ArrowLeft","ArrowRight","ArrowUp","Space","ShiftLeft","ShiftRight"].includes(e.code)) e.preventDefault();
+  },{passive:false});
+  addEventListener("keyup",(e)=>keys.delete(e.code));
+
+  // =========================
+  // Deterministic RNG (daily)
+  // =========================
+  function dailySeedUTC(){
+    const d=new Date();
+    return d.getUTCFullYear()*10000 + (d.getUTCMonth()+1)*100 + d.getUTCDate();
+  }
+  let seed = dailySeedUTC();
+  function srand(s){ seed = (s>>>0) || 1; }
+  function srnd(){ seed = (seed*1664525 + 1013904223)>>>0; return seed/4294967296; }
+
+  function todaysTargetScore(){
+    const base=3500;
+    const variance=(dailySeedUTC()%7)*400;
+    return base+variance;
+  }
+
+  // =========================
+  // World / tuning
+  // =========================
+  const WORLD_W=7000;
+  const GROUND_N=0.84;
+
+  const SHIP_TURN=3.3;
+  const SHIP_THRUST=460;
+  const FRICTION=0.992;
+
+  const BULLET_SPEED=920;
+  const BULLET_LIFE=1.15;
+  const FIRE_RATE=0.11;
+
+  const LANDER_BASE=110;
+  const MUTANT_BASE=170;
+
+  const ENEMY_SPAWN_BASE=1.45;
+  const MAX_ENEMIES=22;
+
+  const RESCUE_RADIUS_X=92;
+  const RESCUE_RADIUS_Y=130;
+
+  function groundY(){ return innerHeight*GROUND_N; }
+  function terrainHeightAt(worldX){
+    const x=worldX;
+    return Math.sin(x*0.0018)*16 + Math.sin(x*0.0062)*9 + Math.sin(x*0.013)*5;
+  }
+
+  let camX=0;
+  function worldToScreenX(wx){
+    let x=wx-camX;
+    if(x>WORLD_W/2) x-=WORLD_W;
+    if(x<-WORLD_W/2) x+=WORLD_W;
+    return x;
+  }
+
+  // =========================
+  // Visuals
+  // =========================
+  const VISUALS={
+    glow:18,
+    scanlineAlpha:0.07,
+    vignetteAlpha:0.38,
+    shake:0,
+    flash:0,
+    starLayers:[
+      {count:150,speed:0.12,size:1,alpha:0.28},
+      {count:100,speed:0.28,size:2,alpha:0.45},
+      {count:60,speed:0.55,size:3,alpha:0.68},
+    ]
+  };
+  const stars = VISUALS.starLayers.map(l=>Array.from({length:l.count},()=>({x:Math.random(),y:Math.random(),r:l.size})));
+
+  // =========================
+  // Entities
+  // =========================
+  const ship={ x:WORLD_W*0.5, y:280, vx:0, vy:0, a:0, r:15, lives:3, invuln:0, hyperspaceCD:0, smartBombs:3 };
+  const bullets=[];
+  const enemies=[];
+  const particles=[];
+  const humans=[];
+  const HUMAN_COUNT=16;
+
+  for(let i=0;i<HUMAN_COUNT;i++){
+    humans.push({ x:(i+0.5)*(WORLD_W/HUMAN_COUNT)+rand(-160,160), alive:true, rescued:false, carriedBy:null, wobble:rand(0,Math.PI*2) });
+  }
+
+  // =========================
+  // Game state
+  // =========================
+  let mode="attract"; // attract | play | gameover
+  let score=0;
+  let level=1;
+  let dailyMode=true;
+  let time=0;
+  let spawnTimer=0;
+  let fireCooldown=0;
+  let smartBombCD=0;
+
+  let timeAttack=false;
+  let timeLeft=TIME_ATTACK_SECONDS;
+
+  let targetBeaten=false;
+
+  // Streak / PB
+  let streak=Number(localStorage.getItem("defender_streak")||0);
+  let lastPlayDay=Number(localStorage.getItem("defender_last_day")||0);
+  let dailyPB=0;
+
+  // Leaderboard cached
+  let topTodayScore=null;
+  let topTodayUser=null;
+
+  // =========================
+  // Ghost capture/play
+  // =========================
+  let ghostCapture=[];
+  let ghostPlay=null;
+  let ghostEvery=3;
+  let ghostFrame=0;
+
+  function encodeGhost(arr){
+    let out=[], px=0,py=0,pa=0;
+    for(const [x,y,a] of arr){
+      out.push((x-px),(y-py),(a-pa));
+      px=x;py=y;pa=a;
+    }
+    const str=out.join(",");
+    return btoa(unescape(encodeURIComponent(str)));
+  }
+  function decodeGhost(b64){
+    const str=decodeURIComponent(escape(atob(b64)));
+    const nums=str.split(",").map(n=>Number(n));
+    let arr=[], x=0,y=0,a=0;
+    for(let i=0;i<nums.length;i+=3){
+      x+=nums[i]; y+=nums[i+1]; a+=nums[i+2];
+      arr.push([x,y,a/1000]);
+    }
+    return arr;
+  }
+
+  // =========================
+  // Clip export (WebM)
+  // =========================
+  let recorder=null;
+  let recordedChunks=[];
+  let clipArmed=false;
+
+  const CAPTURE_SECONDS=8;
+  const CAPTURE_FPS=30;
+  let captureFrameCount=0;
+  const captureMaxFrames=CAPTURE_SECONDS*CAPTURE_FPS;
+
+  const clipCanvas=document.createElement("canvas");
+  const clipCtx=clipCanvas.getContext("2d");
+
+  function startClipCapture(){
+    clipCanvas.width=canvas.width;
+    clipCanvas.height=canvas.height;
+    clipArmed=true;
+    captureFrameCount=0;
+    recordedChunks=[];
+    const stream=clipCanvas.captureStream(CAPTURE_FPS);
+
+    let mime="video/webm;codecs=vp9";
+    if (!MediaRecorder.isTypeSupported(mime)) mime="video/webm;codecs=vp8";
+    if (!MediaRecorder.isTypeSupported(mime)) mime="video/webm";
+
+    recorder=new MediaRecorder(stream,{mimeType:mime});
+    recorder.ondataavailable=(e)=>{ if(e.data && e.data.size>0) recordedChunks.push(e.data); };
+    recorder.onstop=()=>{
+      const blob=new Blob(recordedChunks,{type:"video/webm"});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement("a");
+      a.href=url; a.download="defender-deluxe-clip.webm"; a.click();
+      setTimeout(()=>URL.revokeObjectURL(url),1500);
+      setMpStatus("Clip saved.");
+    };
+    recorder.start();
+    setMpStatus("Recording 8s clip… keep playing!");
+  }
+
+  // =========================
+  // Live opponent score via Issues (?vs=Name)
+  // =========================
+  const params=new URLSearchParams(location.search);
+  const vsUser=params.get("vs");
+  const watchUser=params.get("watch");
+  const watchSeed=Number(params.get("seed")||dailySeedUTC());
+
+  let liveOpponent = vsUser ? { user:vsUser, seed:dailySeedUTC(), score:0 } : null;
+  let livePollTimer=0;
+
+  // =========================
+  // WebRTC Duel (invite)
+  // =========================
+  const RTC_CFG={ iceServers:[{urls:"stun:stun.l.google.com:19302"},{urls:"stun:stun1.l.google.com:19302"}] };
+
+  let duel={
+    active:false,
+    pc:null,
+    ch:null,
+    role:null,
+    sendTimer:0,
+    opponent:{x:0,y:0,a:0,score:0,alive:true,name:"Opponent"}
+  };
+  function setMpStatus(s){ if(mpStatus) mpStatus.textContent=s; }
+  function waitIceComplete(pc){
+    return new Promise((resolve)=>{
+      if(pc.iceGatheringState==="complete") return resolve();
+      const on=()=>{ if(pc.iceGatheringState==="complete"){ pc.removeEventListener("icegatheringstatechange",on); resolve(); } };
+      pc.addEventListener("icegatheringstatechange",on);
+    });
+  }
+  function hookChannel(){
+    if(!duel.ch) return;
+    duel.ch.onopen=()=>{
+      duel.active=true;
+      setMpStatus("Duel connected! Starting Daily Time Attack for both.");
+      resetGame({daily:true, timeAttack:true});
+    };
+    duel.ch.onclose=()=>{ duel.active=false; setMpStatus("Duel disconnected."); };
+    duel.ch.onmessage=(e)=>{
+      try{
+        const m=JSON.parse(e.data);
+        if(m.t==="state"){
+          duel.opponent.x=m.x; duel.opponent.y=m.y; duel.opponent.a=m.a;
+          duel.opponent.score=m.s; duel.opponent.alive=m.alive;
+          duel.opponent.name=m.name||duel.opponent.name;
+        }
+      }catch{}
+    };
+  }
+
+  // =========================
+  // UI hooks (buttons)
+  // =========================
+  if(btnRefreshLB) btnRefreshLB.onclick=()=>refreshLeaderboard();
+
+  if(btnPlay) btnPlay.onclick=()=>resetGame({daily:false, timeAttack:false});
+  if(btnDaily) btnDaily.onclick=()=>resetGame({daily:true, timeAttack:false});
+  if(btnTime) btnTime.onclick=()=>resetGame({daily:true, timeAttack:true});
+
+  if(btnDuel) btnDuel.onclick=()=>{ drawer?.classList.add("open"); setMpStatus("Choose Host or Join to start a 2P duel."); };
+
+  if(btnShare) btnShare.onclick=async ()=>{
+    const seedTxt = dailyMode ? `Seed ${dailySeedUTC()}` : `Seed ${seed}`;
+    const tag = targetBeaten ? " (Target Beaten!)" : "";
+    const line = `I scored ${score}${tag} in Defender Deluxe — ${seedTxt} — play: ${REPO_PAGES_URL}`;
+    try{
+      await navigator.clipboard.writeText(line);
+      setMpStatus("Copied share text to clipboard.");
+      drawer?.classList.add("open");
+    }catch{
+      setMpStatus("Clipboard blocked. Copy manually:\n"+line);
+      drawer?.classList.add("open");
+    }
+  };
+
+  if(btnClip) btnClip.onclick=()=>{ drawer?.classList.add("open"); startClipCapture(); };
+
+  if(btnHost) btnHost.onclick=async ()=>{
+    ensureAudio();
+    duel.role="host";
+    duel.pc=new RTCPeerConnection(RTC_CFG);
+    duel.ch=duel.pc.createDataChannel("defender");
+    hookChannel();
+    duel.pc.onconnectionstatechange=()=>setMpStatus(`Connection: ${duel.pc.connectionState}`);
+    duel.pc.ondatachannel=(e)=>{ duel.ch=e.channel; hookChannel(); };
+
+    const offer=await duel.pc.createOffer();
+    await duel.pc.setLocalDescription(offer);
+    await waitIceComplete(duel.pc);
+    if(mpCode) mpCode.value=JSON.stringify(duel.pc.localDescription);
+    setMpStatus("Host code created. Send it. Then paste their Answer and click Set Remote.");
+  };
+
+  if(btnJoin) btnJoin.onclick=async ()=>{
+    ensureAudio();
+    duel.role="join";
+    duel.pc=new RTCPeerConnection(RTC_CFG);
+    duel.pc.ondatachannel=(e)=>{ duel.ch=e.channel; hookChannel(); };
+    duel.pc.onconnectionstatechange=()=>setMpStatus(`Connection: ${duel.pc.connectionState}`);
+    setMpStatus("Paste Host Offer into the box then click Set Remote (you will generate an Answer).");
+  };
+
+  if(btnSetRemote) btnSetRemote.onclick=async ()=>{
+    if(!duel.pc) return setMpStatus("Start Host or Join first.");
+    const txt=(mpCode?.value||"").trim();
+    if(!txt) return setMpStatus("Paste a code first.");
+    let desc;
+    try{ desc=JSON.parse(txt); }catch{ return setMpStatus("Invalid JSON code."); }
+
+    if(desc.type==="offer"){
+      // Joiner receives offer, returns answer
+      await duel.pc.setRemoteDescription(desc);
+      const answer=await duel.pc.createAnswer();
+      await duel.pc.setLocalDescription(answer);
+      await waitIceComplete(duel.pc);
+      if(mpCode) mpCode.value=JSON.stringify(duel.pc.localDescription);
+      setMpStatus("Answer created. Send it back to host. Host pastes it and clicks Set Remote.");
+    } else if(desc.type==="answer"){
+      // Host receives answer
+      await duel.pc.setRemoteDescription(desc);
+      setMpStatus("Answer accepted. Duel should connect shortly.");
+    } else {
+      setMpStatus("Code must be an offer or answer.");
+    }
+  };
+
+  if(btnEndDuel) btnEndDuel.onclick=()=>{
+    try{ duel.ch?.close(); }catch{}
+    try{ duel.pc?.close(); }catch{}
+    duel={ active:false, pc:null, ch:null, role:null, sendTimer:0, opponent:{x:0,y:0,a:0,score:0,alive:true,name:"Opponent"} };
+    setMpStatus("Duel ended.");
+  };
+
+  // =========================
+  // Combat actions
+  // =========================
+  function fire(){
+    if(fireCooldown>0) return;
+    fireCooldown=FIRE_RATE;
+    beep(620+srnd()*140,0.045,"square",0.35);
+
+    const bx=ship.x + Math.cos(ship.a)*(ship.r+7);
+    const by=ship.y + Math.sin(ship.a)*(ship.r+7);
+    bullets.push({ x:wrap(bx,WORLD_W), y:by, vx:ship.vx+Math.cos(ship.a)*BULLET_SPEED, vy:ship.vy+Math.sin(ship.a)*BULLET_SPEED, t:0 });
+  }
+
+  function hyperspace(){
+    if(ship.hyperspaceCD>0) return;
+    ship.hyperspaceCD=3.0;
+    ship.x=srnd()*WORLD_W;
+    ship.y=120+srnd()*320;
+    ship.vx*=0.2; ship.vy*=0.2;
+    ship.invuln=0.75;
+    beep(520,0.07,"triangle",0.35);
+    if(srnd()<0.07) shipHit();
+  }
+
+  function smartBomb(){
+    if(smartBombCD>0 || ship.smartBombs<=0) return;
+    ship.smartBombs--;
+    smartBombCD=1.2;
+
+    if(!settings.reduceMotion){
+      VISUALS.flash=Math.min(1.0,VISUALS.flash+0.95);
+      VISUALS.shake=Math.min(26,VISUALS.shake+22);
+    }
+    beep(180,0.12,"sawtooth",0.55);
+    beep(120,0.16,"triangle",0.45);
+    noiseBurst(0.14,0.55);
+
+    for(let i=enemies.length-1;i>=0;i--){
+      const dx=Math.abs(wrapDx(enemies[i].x-ship.x,WORLD_W));
+      if(dx < innerWidth*0.75) killEnemy(i);
+    }
+  }
+
+  function addExplosion(wx,wy,color="#ffffff",count=24,power=260){
+    if(!settings.reduceMotion){
+      VISUALS.shake=Math.min(18,VISUALS.shake+10);
+      VISUALS.flash=Math.min(0.65,VISUALS.flash+0.35);
+    }
+    noiseBurst(0.09,0.35);
+    beep(160+srnd()*80,0.08,"sawtooth",0.45);
+    for(let i=0;i<count;i++){
+      const ang=srnd()*Math.PI*2;
+      const sp=(power*0.35)+srnd()*(power*0.65);
+      particles.push({ x:wx,y:wy, vx:Math.cos(ang)*sp, vy:Math.sin(ang)*sp, life:0.35+srnd()*0.55, t:0, size:1.5+srnd()*1.8, color });
+    }
+  }
+
+  function killEnemy(idx){
+    const e=enemies[idx];
+    if(!e) return;
+
+    if(e.type==="lander" && e.mode==="carry" && e.targetHuman){
+      e.targetHuman.carriedBy=null;
+      e.targetHuman.wobble+=1.0;
+    }
+
+    addExplosion(e.x,e.y, e.type==="mutant" ? "#ff6ad5" : "#9dffea", 26, 290);
+    enemies.splice(idx,1);
+
+    score += (e.type==="mutant") ? 250 : 150;
+    if(score > level*2600){
+      level++;
+      if(level%3===0) ship.smartBombs=Math.min(5,ship.smartBombs+1);
+    }
+
+    // daily PB
+    if(dailyMode){
+      const dayKey=`pb_${dailySeedUTC()}`;
+      dailyPB = Math.max(dailyPB, score);
+      localStorage.setItem(dayKey, String(dailyPB));
+    }
+  }
+
+  function shipHit(){
+    if(ship.invuln>0) return;
+    ship.lives--;
+    ship.invuln=2.0;
+
+    if(!settings.reduceMotion){
+      VISUALS.shake=Math.min(22,VISUALS.shake+16);
+      VISUALS.flash=Math.min(0.8,VISUALS.flash+0.45);
+    }
+    beep(90,0.14,"square",0.55);
+    noiseBurst(0.1,0.4);
+
+    ship.vx*=-0.25;
+    ship.vy*=-0.25;
+
+    if(ship.lives<=0){
+      mode="gameover";
+    }
+  }
+
+  // =========================
+  // Spawning
+  // =========================
+  function spawnLander(){
+    if(enemies.length>=MAX_ENEMIES) return;
+    const side = srnd()<0.5 ? -1 : 1;
+    const x = wrap(ship.x + side*(600+srnd()*800), WORLD_W);
+    const y = 110 + srnd()*310;
+    const dir = srnd()<0.5 ? -1 : 1;
+
+    enemies.push({
+      type:"lander",
+      x,y,
+      vx: dir*(LANDER_BASE + level*7),
+      vy: (srnd()*2-1)*22,
+      r:16,
+      mode:"patrol",
+      targetHuman:null,
+      hp:1
+    });
+  }
+
+  function spawnMutant(x,y){
+    enemies.push({
+      type:"mutant",
+      x:wrap(x,WORLD_W),
+      y:clamp(y,90,540),
+      vx:(srnd()*2-1)*(MUTANT_BASE + level*10),
+      vy:(srnd()*2-1)*60,
+      r:17,
+      mode:"hunt",
+      hp:1
+    });
+  }
+
+  function pickHumanForEnemy(e){
+    let best=null, bestD=Infinity;
+    for(const h of humans){
+      if(!h.alive || h.rescued || h.carriedBy) continue;
+      const dx=Math.abs(wrapDx(h.x-e.x,WORLD_W));
+      const d=dx*dx;
+      if(d<bestD){ bestD=d; best=h; }
+    }
+    return best;
+  }
+
+  // =========================
+  // Rendering
+  // =========================
+  function drawBackground(){
+    ctx.fillStyle="#03040a";
+    ctx.fillRect(0,0,innerWidth,innerHeight);
+
+    const g=ctx.createRadialGradient(innerWidth*0.28, innerHeight*0.42, 60, innerWidth*0.28, innerHeight*0.42, innerWidth*1.05);
+    g.addColorStop(0,"rgba(55,105,180,0.14)");
+    g.addColorStop(0.55,"rgba(110,50,150,0.08)");
+    g.addColorStop(1,"rgba(0,0,0,0)");
+    ctx.fillStyle=g; ctx.fillRect(0,0,innerWidth,innerHeight);
+
+    VISUALS.starLayers.forEach((layer,i)=>{
+      ctx.fillStyle=`rgba(225,240,255,${layer.alpha})`;
+      for(const s of stars[i]){
+        const x=((s.x*innerWidth) - camX*layer.speed)%innerWidth;
+        const y=s.y*innerHeight*0.78;
+        ctx.fillRect(x<0?x+innerWidth:x, y, s.r, s.r);
+      }
+    });
+
+    const vg=ctx.createRadialGradient(innerWidth/2, innerHeight/2, innerWidth*0.18, innerWidth/2, innerHeight/2, innerWidth*0.78);
+    vg.addColorStop(0,"rgba(0,0,0,0)");
+    vg.addColorStop(1,`rgba(0,0,0,${VISUALS.vignetteAlpha})`);
+    ctx.fillStyle=vg; ctx.fillRect(0,0,innerWidth,innerHeight);
+  }
+
+  function drawTerrainAndCities(){
+    const gy=groundY();
+    ctx.strokeStyle="rgba(207,224,255,0.14)";
+    ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(0,gy); ctx.lineTo(innerWidth,gy); ctx.stroke();
+
+    ctx.fillStyle="rgba(20,28,55,0.75)";
+    ctx.beginPath(); ctx.moveTo(0,innerHeight);
+    const step=18;
+    for(let x=0;x<=innerWidth;x+=step){
+      const wx=camX+x;
+      const h=26+terrainHeightAt(wx);
+      ctx.lineTo(x, gy+h);
+    }
+    ctx.lineTo(innerWidth,innerHeight);
+    ctx.closePath(); ctx.fill();
+
+    for(let x=0;x<=innerWidth;x+=38){
+      const wx=camX+x;
+      const h=26+terrainHeightAt(wx);
+      const y=gy+h-4;
+      const tw=0.35+0.65*Math.max(0,Math.sin((wx*0.004)+time*5.2));
+      const a=0.06+tw*0.18;
+      ctx.fillStyle=`rgba(255,226,168,${a})`;
+      ctx.fillRect(x,y,2,1);
+      if((Math.floor(wx*0.02)%7)===0) ctx.fillRect(x+4,y-1,1,2);
+    }
+  }
+
+  function drawHumans(){
+    const baseY=groundY()-14;
+    for(const h of humans){
+      if(!h.alive) continue;
+      const sx=worldToScreenX(h.x);
+      const bob=Math.sin(time*3.2+h.wobble)*2;
+      const hy=h.carriedBy ? (h.carriedBy.y+18) : (baseY+bob+terrainHeightAt(h.x));
+
+      if(h.rescued){
+        ctx.save();
+        ctx.shadowColor="#ffe2a8"; ctx.shadowBlur=12;
+        ctx.beginPath(); ctx.arc(sx,hy,4.2,0,Math.PI*2);
+        ctx.fillStyle="rgba(255,226,168,0.85)"; ctx.fill();
+        ctx.restore();
+        continue;
+      }
+
+      ctx.save();
+      ctx.shadowColor="#cfe0ff"; ctx.shadowBlur=10;
+      ctx.beginPath(); ctx.arc(sx,hy,3.2,0,Math.PI*2);
+      ctx.fillStyle="rgba(207,224,255,0.9)"; ctx.fill();
+      ctx.beginPath(); ctx.moveTo(sx-4,hy+3); ctx.lineTo(sx+4,hy+3);
+      ctx.strokeStyle="rgba(207,224,255,0.55)"; ctx.lineWidth=1; ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  function drawParticles(){
+    for(const p of particles){
+      const sx=worldToScreenX(p.x);
+      const k=1-(p.t/p.life);
+      ctx.save();
+      ctx.shadowColor=p.color; ctx.shadowBlur=16;
+      ctx.globalAlpha=clamp(k,0,1);
+      ctx.fillStyle=p.color;
+      ctx.beginPath(); ctx.arc(sx,p.y,p.size*(0.7+k*0.6),0,Math.PI*2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  function drawShip(){
+    const sx=worldToScreenX(ship.x), sy=ship.y;
+    ctx.save();
+    ctx.translate(sx,sy);
+    ctx.rotate(ship.a);
+
+    const flicker=ship.invuln>0 && Math.floor(time*18)%2===0;
+    ctx.globalAlpha=flicker ? 0.42 : 1;
+
+    ctx.shadowColor="#7fd6ff"; ctx.shadowBlur=VISUALS.glow;
+    ctx.strokeStyle="#dff3ff"; ctx.lineWidth=2.3;
+
+    ctx.beginPath();
+    ctx.moveTo(24,0);
+    ctx.lineTo(-16,-13);
+    ctx.lineTo(-7,0);
+    ctx.lineTo(-16,13);
+    ctx.closePath();
+    ctx.stroke();
+
+    ctx.shadowColor="#9dffea"; ctx.shadowBlur=14;
+    ctx.beginPath(); ctx.arc(5,0,3.4,0,Math.PI*2);
+    ctx.strokeStyle="rgba(157,255,234,0.95)";
+    ctx.stroke();
+
+    if(inputThrust()){
+      ctx.shadowColor="#ffb86c"; ctx.shadowBlur=18;
+      ctx.beginPath();
+      ctx.moveTo(-14,0);
+      ctx.lineTo(-30-srnd()*10,-4);
+      ctx.lineTo(-22,0);
+      ctx.lineTo(-30-srnd()*10,4);
+      ctx.closePath();
+      ctx.strokeStyle="rgba(255,226,168,0.9)";
+      ctx.stroke();
+    }
+
+    ctx.restore();
+    ctx.globalAlpha=1;
+  }
+
+  function drawEnemy(e){
+    const sx=worldToScreenX(e.x), sy=e.y;
+    ctx.save();
+    ctx.translate(sx,sy);
+
+    if(e.type==="lander"){
+      ctx.shadowColor="#9dffea"; ctx.shadowBlur=16;
+      ctx.strokeStyle="#dffcff"; ctx.lineWidth=2;
+
+      ctx.beginPath(); ctx.ellipse(0,0,20,12,0,0,Math.PI*2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-12,0); ctx.lineTo(12,0);
+      ctx.strokeStyle="rgba(157,255,234,0.35)"; ctx.lineWidth=1; ctx.stroke();
+
+      if(e.mode==="abduct" || e.mode==="carry"){
+        ctx.beginPath(); ctx.moveTo(0,10); ctx.lineTo(0,28);
+        ctx.strokeStyle="rgba(255,226,168,0.35)"; ctx.lineWidth=2; ctx.stroke();
+      }
+    } else {
+      ctx.shadowColor="#ff6ad5"; ctx.shadowBlur=18;
+      ctx.strokeStyle="rgba(255,214,242,0.95)"; ctx.lineWidth=2;
+
+      ctx.beginPath();
+      ctx.moveTo(0,-16); ctx.lineTo(14,0); ctx.lineTo(0,16); ctx.lineTo(-14,0);
+      ctx.closePath(); ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(-8,0); ctx.lineTo(8,0);
+      ctx.moveTo(0,-8); ctx.lineTo(0,8);
+      ctx.strokeStyle="rgba(255,106,213,0.35)"; ctx.lineWidth=1; ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  function drawBullet(b){
+    const sx=worldToScreenX(b.x);
+    ctx.save();
+    ctx.shadowColor="#ffffff"; ctx.shadowBlur=14;
+    ctx.fillStyle="rgba(255,255,255,0.95)";
+    ctx.beginPath(); ctx.arc(sx,b.y,2.8,0,Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawGhostPlayback(){
+    if(!ghostPlay || ghostPlay.length<2) return;
+    const t = timeAttack ? (TIME_ATTACK_SECONDS - timeLeft) : time;
+    const idx = Math.min(ghostPlay.length-1, Math.floor(t * (CAPTURE_FPS/ghostEvery)));
+    const start = Math.max(0, idx-140);
+
+    ctx.save();
+    ctx.globalAlpha=0.16;
+    ctx.strokeStyle="#9dffea";
+    ctx.lineWidth=2;
+    ctx.beginPath();
+    for(let i=start;i<=idx;i++){
+      const [x,y] = ghostPlay[i];
+      const sx=worldToScreenX(x);
+      if(i===start) ctx.moveTo(sx,y); else ctx.lineTo(sx,y);
+    }
+    ctx.stroke();
+
+    const [gx,gy,ga] = ghostPlay[idx];
+    ctx.globalAlpha=0.5;
+    ctx.translate(worldToScreenX(gx),gy);
+    ctx.rotate(ga);
+    ctx.strokeStyle="#9dffea";
+    ctx.strokeRect(-12,-8,24,16);
+    ctx.restore();
+  }
+
+  function drawOpponentShip(){
+    if(!duel.active) return;
+    const o=duel.opponent;
+    const sx=worldToScreenX(o.x), sy=o.y;
+    ctx.save();
+    ctx.globalAlpha=0.65;
+    ctx.translate(sx,sy);
+    ctx.rotate(o.a);
+    ctx.shadowColor="#ff6ad5"; ctx.shadowBlur=16;
+    ctx.strokeStyle="rgba(255,214,242,0.95)";
+    ctx.lineWidth=2.2;
+    ctx.strokeRect(-14,-10,28,20);
+    ctx.restore();
+  }
+
+  function drawHUD(){
+    ctx.save();
+    ctx.textAlign="right";
+    ctx.textBaseline="top";
+    ctx.fillStyle="rgba(215,224,255,0.72)";
+    ctx.font="12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+
+    const seedTxt = dailyMode ? `DAILY ${dailySeedUTC()}` : `SEED ${seed}`;
+    ctx.fillText(`${seedTxt}  SCORE ${score}  L${level}  ♥${ship.lives}  B${ship.smartBombs}`, innerWidth-12, 12);
+    ctx.fillText(`TARGET ${todaysTargetScore()} ${targetBeaten?"✓":""}`, innerWidth-12, 28);
+    ctx.fillText(`BEAT ${DEV_NAME}: ${DEV_TARGET_SCORE}`, innerWidth-12, 44);
+    ctx.fillText(`STREAK ${streak}  PB ${dailyPB||0}`, innerWidth-12, 60);
+    if(timeAttack) ctx.fillText(`TIME ${Math.ceil(timeLeft)}`, innerWidth-12, 76);
+
+    if(liveOpponent) ctx.fillText(`OPP ${liveOpponent.user}: ${liveOpponent.score||0}`, innerWidth-12, timeAttack?92:76);
+    if(duel.active) ctx.fillText(`LIVE OPP ${duel.opponent.name}: ${duel.opponent.score||0}`, innerWidth-12, timeAttack?108:92);
+
+    ctx.restore();
+  }
+
+  function drawScanlinesAndFlash(){
+    if(VISUALS.flash>0){
+      ctx.save();
+      ctx.fillStyle=`rgba(255,255,255,${VISUALS.flash*0.35})`;
+      ctx.fillRect(0,0,innerWidth,innerHeight);
+      ctx.restore();
+    }
+    if(!settings.crt) return;
+    ctx.save();
+    ctx.fillStyle=`rgba(0,0,0,${VISUALS.scanlineAlpha})`;
+    for(let y=0;y<innerHeight;y+=2) ctx.fillRect(0,y,innerWidth,1);
+    ctx.restore();
+  }
+
+  function drawOverlay(title, subtitle, extra){
+    ctx.save();
+    ctx.fillStyle="rgba(0,0,0,0.60)";
+    ctx.fillRect(0,0,innerWidth,innerHeight);
+    ctx.textAlign="center";
+    ctx.textBaseline="middle";
+
+    ctx.shadowColor="#9dffea"; ctx.shadowBlur=18;
+    ctx.fillStyle="#ffffff";
+    ctx.font="56px Arial Black, sans-serif";
+    ctx.fillText(title, innerWidth/2, innerHeight/2 - 40);
+
+    ctx.shadowBlur=0;
+    ctx.fillStyle="#cfe0ff";
+    ctx.font="18px system-ui, sans-serif";
+    ctx.fillText(subtitle, innerWidth/2, innerHeight/2 + 10);
+
+    if(extra){
+      ctx.fillStyle="rgba(255,226,168,0.95)";
+      ctx.font="16px system-ui, sans-serif";
+      ctx.fillText(extra, innerWidth/2, innerHeight/2 + 44);
+    }
+    ctx.restore();
+  }
+
+  function drawAttractScreen(){
+    camX = wrap(camX + 0.6, WORLD_W);
+
+    drawBackground();
+    drawTerrainAndCities();
+
+    ctx.save();
+    ctx.fillStyle="rgba(0,0,0,0.55)";
+    ctx.fillRect(0,0,innerWidth,innerHeight);
+    ctx.textAlign="center";
+    ctx.textBaseline="middle";
+
+    ctx.shadowColor="#9dffea"; ctx.shadowBlur=22;
+    ctx.fillStyle="#ffffff";
+    ctx.font="88px Arial Black, sans-serif";
+    ctx.fillText("DEFENDER", innerWidth/2, innerHeight*0.36);
+
+    ctx.fillStyle="#9dffea";
+    ctx.font="64px Arial Black, sans-serif";
+    ctx.fillText("DELUXE", innerWidth/2, innerHeight*0.45);
+
+    ctx.shadowBlur=0;
+    ctx.fillStyle="#cfe0ff";
+    ctx.font="20px system-ui, sans-serif";
+    ctx.fillText("PURE CANVAS · DAILY CHALLENGE · GHOSTS · 2P P2P DUEL",
+      innerWidth/2, innerHeight*0.53);
+
+    if(Math.floor(time*2)%2===0){
+      ctx.font="28px Arial Black, sans-serif";
+      ctx.fillStyle="#ffe2a8";
+      ctx.fillText("PRESS ENTER TO START", innerWidth/2, innerHeight*0.62);
+    }
+
+    ctx.font="16px system-ui, sans-serif";
+    ctx.fillStyle="rgba(215,224,255,0.80)";
+    ctx.fillText("← → rotate · ↑ thrust · Space fire · Shift hyperspace · B smart bomb · P pause · X screenshot",
+      innerWidth/2, innerHeight*0.72);
+
+    ctx.fillStyle="rgba(215,224,255,0.70)";
+    ctx.fillText(`TODAY'S TARGET: ${todaysTargetScore()} · BEAT ${DEV_NAME}: ${DEV_TARGET_SCORE}`,
+      innerWidth/2, innerHeight*0.80);
+
+    if(topTodayScore!=null){
+      ctx.fillStyle="rgba(215,224,255,0.70)";
+      ctx.fillText(`TOP TODAY: ${topTodayUser} — ${topTodayScore}`, innerWidth/2, innerHeight*0.86);
+    }
+
+    ctx.restore();
+    if(settings.crt) drawScanlinesAndFlash();
+  }
+
+  // =========================
+  // Inputs mapping
+  // =========================
+  const inputLeft=()=>keys.has("ArrowLeft")||touchState.left;
+  const inputRight=()=>keys.has("ArrowRight")||touchState.right;
+  const inputThrust=()=>keys.has("ArrowUp")||touchState.thrust;
+  const inputFire=()=>keys.has("Space")||touchState.fire;
+  const inputBomb=()=>keys.has("KeyB")||touchState.bomb;
+  const inputHyper=()=>keys.has("ShiftLeft")||keys.has("ShiftRight")||touchState.hyper;
+
+  // =========================
+  // Streak + daily PB helpers
+  // =========================
+  function loadDailyPB(){
+    const dayKey=`pb_${dailySeedUTC()}`;
+    dailyPB = Number(localStorage.getItem(dayKey)||0);
+  }
+
+  // =========================
+  // Reset / Start
+  // =========================
+  function resetGame({daily=true, timeAttack:ta=false} = {}){
+    score=0;
+    level=1;
+    dailyMode=daily;
+
+    timeAttack=ta;
+    timeLeft=TIME_ATTACK_SECONDS;
+
+    const s = daily ? dailySeedUTC() : (Date.now()>>>0);
+    srand(s);
+
+    ship.x=WORLD_W*0.5; ship.y=280;
+    ship.vx=ship.vy=0;
+    ship.a=0;
+    ship.lives=3;
+    ship.invuln=1.2;
+    ship.hyperspaceCD=0;
+    ship.smartBombs=3;
+
+    bullets.length=0;
+    enemies.length=0;
+    particles.length=0;
+
+    spawnTimer=0;
+    time=0;
+    paused=false;
+    fireCooldown=0;
+    smartBombCD=0;
+
+    targetBeaten=false;
+
+    // Ghost reset
+    ghostCapture=[]; ghostPlay=null; ghostFrame=0;
+
+    for(const h of humans){
+      h.alive=true; h.rescued=false; h.carriedBy=null; h.wobble=rand(0,Math.PI*2);
+    }
+
+    // Daily streak + PB
+    if(daily){
+      const today=dailySeedUTC();
+      if(lastPlayDay===today-1) streak++;
+      else if(lastPlayDay!==today) streak=1;
+      lastPlayDay=today;
+      localStorage.setItem("defender_streak", String(streak));
+      localStorage.setItem("defender_last_day", String(today));
+      loadDailyPB();
+    } else {
+      dailyPB=0;
+    }
+
+    mode="play";
+  }
+
+  function quickRestart(){
+    resetGame({ daily: dailyMode, timeAttack });
+  }
+
+  // =========================
+  // Score submit -> GitHub Issues
+  // =========================
+  function openSubmitScore(){
+    const reddit=(settings.redditName||"Anonymous").trim()||"Anonymous";
+    const seedTxt = dailyMode ? dailySeedUTC() : seed;
+    const badge = computeBadge();
+
+    const ghost = ghostCapture.length ? encodeGhost(ghostCapture) : "";
+
+    const body =
+`Reddit: ${reddit}
+Score: ${score}
+Level: ${level}
+Seed: ${seedTxt}
+Badge: ${badge}
+TargetBeaten: ${targetBeaten ? "yes" : "no"}
+Ghost: ${ghost}
+
+Notes:
+- Daily mode scores should use the daily seed for fair comparison.
+- Please keep one best submission per day per user.
+
+(Submitted from ${REPO_PAGES_URL})`;
+
+    const title = `Score: ${score} — ${reddit} — Seed ${seedTxt}`;
+    const url = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/issues/new?labels=score&title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
+    window.open(url,"_blank");
+
+    // “rematch prompt”
+    setTimeout(()=>{ if(confirm("Score submitted! Play again?")) quickRestart(); }, 500);
+  }
+
+  // =========================
+  // Leaderboard (GitHub Issues)
+  // =========================
+  function parseScoreIssue(body){
+    const get=(k)=>{
+      const m=body.match(new RegExp(`^\\s*${k}\\s*:\\s*(.+)\\s*$`,"mi"));
+      return m ? m[1].trim() : null;
+    };
+    const user = get("Reddit") || get("User") || get("Username");
+    const scoreStr = get("Score");
+    const levelStr = get("Level");
+    const seedStr  = get("Seed");
+    const ghost    = get("Ghost");
+    if(!user || !scoreStr || !seedStr) return null;
+
+    const score = Number(scoreStr.replace(/[^\d]/g,""));
+    const level = Number((levelStr||"1").replace(/[^\d]/g,"")) || 1;
+    const seed  = Number(seedStr.replace(/[^\d]/g,""));
+    if(!Number.isFinite(score) || !Number.isFinite(seed)) return null;
+
+    return { user, score, level, seed, ghost };
+  }
+
+  async function refreshLeaderboard(){
+    if(lbEl) lbEl.textContent="Loading leaderboard…";
+    try{
+      const url=`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/issues?state=open&per_page=50&labels=score`;
+      const res=await fetch(url,{headers:{Accept:"application/vnd.github+json"}});
+      if(!res.ok) throw new Error("GitHub API fetch error / rate limit.");
+      const issues=await res.json();
+
+      const entries=[];
+      for(const it of issues){
+        if(!it.body) continue;
+        const p=parseScoreIssue(it.body);
+        if(!p) continue;
+        entries.push(p);
+      }
+
+      const today=dailySeedUTC();
+      const todays=entries.filter(e=>e.seed===today).sort((a,b)=>b.score-a.score).slice(0,10);
+      const all=entries.sort((a,b)=>b.score-a.score).slice(0,10);
+
+      if(todays.length){
+        topTodayUser=todays[0].user;
+        topTodayScore=todays[0].score;
+      }
+
+      let out="";
+      out += `TOP 10 — TODAY (Seed ${today})\n`;
+      out += todays.length ? todays.map((e,i)=>`${i+1}. ${e.user} — ${e.score} (L${e.level})`).join("\n") : "No scores yet. Be the first.\n";
+      out += `\n\nTOP 10 — ALL TIME\n`;
+      out += all.length ? all.map((e,i)=>`${i+1}. ${e.user} — ${e.score} (Seed ${e.seed})`).join("\n") : "No scores found.\n";
+      out += `\n\nTip: score submissions are GitHub Issues labeled 'score'.`;
+
+      if(lbEl) lbEl.textContent=out;
+    }catch(e){
+      if(lbEl) lbEl.textContent=`Couldn't load leaderboard.\n${String(e.message||e)}`;
+    }
+  }
+  setTimeout(refreshLeaderboard, 900);
+
+  async function loadBestGhostForUser(user, seedWanted){
+    const url=`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/issues?state=open&per_page=100&labels=score`;
+    const res=await fetch(url,{headers:{Accept:"application/vnd.github+json"}});
+    if(!res.ok) return null;
+    const issues=await res.json();
+
+    let best=null;
+    for(const it of issues){
+      const p=parseScoreIssue(it.body||"");
+      if(!p) continue;
+      if((p.user||"").toLowerCase()!==user.toLowerCase()) continue;
+      if(Number(p.seed)!==Number(seedWanted)) continue;
+      if(!p.ghost) continue;
+      if(!best || p.score>best.score) best=p;
+    }
+    return best;
+  }
+
+  async function pollOpponentScore(user, seedWanted){
+    const best=await loadBestGhostForUser(user, seedWanted);
+    if(!best) return null;
+    return { user:best.user, seed:best.seed, score:best.score };
+  }
+
+  // =========================
+  // Badges
+  // =========================
+  function computeBadge(){
+    if(score>=12000) return "LEGEND";
+    if(score>=9000) return "ACE PILOT";
+    if(score>=6000) return "VETERAN";
+    if(score>=3000) return "ROOKIE+";
+    return "CADET";
+  }
+
+  // =========================
+  // Screenshot (X)
+  // =========================
+  function saveScreenshot(){
+    const a=document.createElement("a");
+    a.href=canvas.toDataURL("image/png");
+    a.download="defender-deluxe.png";
+    a.click();
+  }
+
+  // =========================
+  // Update loop
+  // =========================
+  function addThrustParticle(){
+    const wx = ship.x - Math.cos(ship.a)*(ship.r+8);
+    const wy = ship.y - Math.sin(ship.a)*(ship.r+8);
+    const ang = ship.a + Math.PI + (srnd()*2-1)*0.35;
+    const sp = 120 + srnd()*130;
+    particles.push({
+      x:wrap(wx,WORLD_W), y:wy,
+      vx:Math.cos(ang)*sp + ship.vx*0.2,
+      vy:Math.sin(ang)*sp + ship.vy*0.2,
+      life:0.18+srnd()*0.17, t:0,
+      size:1.0+srnd()*1.0,
+      color:"#ffb86c"
+    });
+  }
+
+  function update(dt){
+    time += dt;
+
+    if(mode!=="play") return;
+
+    // Time attack countdown
+    if(timeAttack){
+      timeLeft -= dt;
+      if(timeLeft<=0){
+        timeLeft=0;
+        mode="gameover";
+      }
+    }
+
+    // Spawn enemies
+    spawnTimer += dt;
+    const spawnInterval = Math.max(0.55, ENEMY_SPAWN_BASE - level*0.07);
+    if(spawnTimer>=spawnInterval){
+      spawnTimer=0;
+      if(srnd() < Math.min(0.22, 0.06 + level*0.015)){
+        spawnMutant(ship.x + (srnd()*2-1)*1300, 120+srnd()*320);
+      } else spawnLander();
+    }
+
+    // Inputs & ship physics
+    if(inputLeft()) ship.a -= SHIP_TURN*dt;
+    if(inputRight()) ship.a += SHIP_TURN*dt;
+
+    if(inputThrust()){
+      ship.vx += Math.cos(ship.a)*SHIP_THRUST*dt;
+      ship.vy += Math.sin(ship.a)*SHIP_THRUST*dt;
+      if(srnd()<0.14) addThrustParticle();
+    }
+    if(inputFire()) fire();
+    if(inputHyper()) hyperspace();
+    if(inputBomb()) smartBomb();
+
+    fireCooldown=Math.max(0, fireCooldown-dt);
+    smartBombCD=Math.max(0, smartBombCD-dt);
+    ship.invuln=Math.max(0, ship.invuln-dt);
+    ship.hyperspaceCD=Math.max(0, ship.hyperspaceCD-dt);
+
+    ship.vx *= Math.pow(FRICTION, dt*60);
+    ship.vy *= Math.pow(FRICTION, dt*60);
+
+    ship.x = wrap(ship.x + ship.vx*dt, WORLD_W);
+    ship.y = clamp(ship.y + ship.vy*dt, 60, 540);
+
+    camX = ship.x - innerWidth*0.5;
+
+    // Ghost capture
+    ghostFrame++;
+    if(ghostFrame%ghostEvery===0){
+      ghostCapture.push([Math.round(ship.x), Math.round(ship.y), Math.round(ship.a*1000)]);
+      if(ghostCapture.length>2400) ghostCapture.shift();
+    }
+
+    // Bullets
+    for(let i=bullets.length-1;i>=0;i--){
+      const b=bullets[i];
+      b.t += dt;
+      b.x = wrap(b.x + b.vx*dt, WORLD_W);
+      b.y += b.vy*dt;
+
+      if(b.t>BULLET_LIFE || b.y<15 || b.y>innerHeight-15){
+        bullets.splice(i,1);
+        continue;
+      }
+
+      for(let j=enemies.length-1;j>=0;j--){
+        const e=enemies[j];
+        if(dist2(b.x,b.y,e.x,e.y) < (e.r+4)*(e.r+4)){
+          killEnemy(j);
+          bullets.splice(i,1);
+          break;
+        }
+      }
+    }
+
+    // Humans rescue
+    for(const h of humans){
+      if(!h.alive || h.rescued) continue;
+      if(h.carriedBy){ h.x = wrap(h.carriedBy.x, WORLD_W); continue; }
+      const dx = Math.abs(wrapDx(h.x - ship.x, WORLD_W));
+      const dy = Math.abs((groundY()-12) - ship.y);
+      if(dx<RESCUE_RADIUS_X && dy<RESCUE_RADIUS_Y){
+        h.rescued=true;
+        score += 250;
+        beep(880,0.06,"triangle",0.33);
+
+        if(dailyMode){
+          const dayKey=`pb_${dailySeedUTC()}`;
+          dailyPB=Math.max(dailyPB, score);
+          localStorage.setItem(dayKey, String(dailyPB));
+        }
+      }
+    }
+
+    // Enemies AI
+    for(let i=enemies.length-1;i>=0;i--){
+      const e=enemies[i];
+
+      if(e.type==="lander"){
+        if(e.mode==="patrol"){
+          if(srnd() < (0.015 + level*0.002)){
+            const h=pickHumanForEnemy(e);
+            if(h){ e.targetHuman=h; e.mode="abduct"; }
+          }
+        }
+
+        if(e.mode==="abduct" && e.targetHuman && e.targetHuman.alive && !e.targetHuman.rescued && !e.targetHuman.carriedBy){
+          const tx=e.targetHuman.x;
+          let dx=wrapDx(tx-e.x, WORLD_W);
+          e.vx += clamp(dx,-230,230)*0.006*dt*60;
+
+          const ty=groundY()-18 + terrainHeightAt(tx);
+          e.vy += clamp(ty-e.y,-230,230)*0.010*dt*60;
+
+          if(dist2(e.x,e.y,tx,ty) < 34*34){
+            e.mode="carry";
+            e.targetHuman.carriedBy=e;
+            score=Math.max(0, score-50);
+            beep(220,0.07,"square",0.35);
+          }
+        } else if(e.mode==="abduct"){
+          e.mode="patrol"; e.targetHuman=null;
+        }
+
+        if(e.mode==="carry"){
+          e.vy -= (48+level*4)*dt;
+          if(e.targetHuman && e.y<70){
+            e.targetHuman.alive=false;
+            e.targetHuman.carriedBy=null;
+            const hx=e.targetHuman.x;
+            e.targetHuman=null;
+            e.mode="patrol";
+            spawnMutant(hx,140);
+            beep(140,0.09,"sawtooth",0.45);
+          }
+        }
+
+        e.x = wrap(e.x + e.vx*dt, WORLD_W);
+        e.y += e.vy*dt;
+
+        if(e.y<70){ e.y=70; e.vy=Math.abs(e.vy)*0.6; }
+        if(e.y>540){ e.y=540; e.vy=-Math.abs(e.vy)*0.6; }
+
+        e.vx *= 0.999;
+        e.vy *= 0.994;
+
+      } else {
+        let dx=wrapDx(ship.x-e.x, WORLD_W);
+        let dy=ship.y-e.y;
+        const ax=clamp(dx,-400,400)*0.010;
+        const ay=clamp(dy,-280,280)*0.012;
+        e.vx += ax*dt*60;
+        e.vy += ay*dt*60;
+
+        const maxSp = MUTANT_BASE + level*16;
+        const sp=Math.hypot(e.vx,e.vy);
+        if(sp>maxSp){ e.vx=(e.vx/sp)*maxSp; e.vy=(e.vy/sp)*maxSp; }
+
+        e.x = wrap(e.x + e.vx*dt, WORLD_W);
+        e.y = clamp(e.y + e.vy*dt, 70, 540);
+
+        e.vx *= 0.998;
+        e.vy *= 0.996;
+      }
+
+      // Collision with ship
+      const rr=e.r+ship.r;
+      if(dist2(e.x,e.y,ship.x,ship.y) < rr*rr){
+        shipHit();
+        const ang=Math.atan2(e.y-ship.y, wrapDx(e.x-ship.x, WORLD_W));
+        e.vx += Math.cos(ang)*140;
+        e.vy += Math.sin(ang)*140;
+      }
+    }
+
+    // Particles update
+    for(let i=particles.length-1;i>=0;i--){
+      const p=particles[i];
+      p.t += dt;
+      p.x = wrap(p.x + p.vx*dt, WORLD_W);
+      p.y += p.vy*dt;
+      p.vx *= Math.pow(0.985, dt*60);
+      p.vy *= Math.pow(0.985, dt*60);
+      if(p.t>p.life) particles.splice(i,1);
+    }
+
+    // Today’s target
+    if(!targetBeaten && score>=todaysTargetScore()){
+      targetBeaten=true;
+      if(!settings.reduceMotion){
+        VISUALS.flash=Math.min(1, VISUALS.flash+0.8);
+        VISUALS.shake=Math.min(24, VISUALS.shake+18);
+      }
+      beep(980,0.18,"triangle",0.6);
+    }
+
+    // Live opponent polling
+    if(liveOpponent){
+      livePollTimer -= dt;
+      if(livePollTimer<=0){
+        livePollTimer=10;
+        pollOpponentScore(liveOpponent.user, dailySeedUTC()).then(v=>{ if(v) liveOpponent.score=v.score; });
+      }
+    }
+
+    // WebRTC duel state send
+    if(duel.active && duel.ch?.readyState==="open"){
+      duel.sendTimer -= dt;
+      if(duel.sendTimer<=0){
+        duel.sendTimer=0.05;
+        const payload={ t:"state", x:ship.x, y:ship.y, a:ship.a, s:score, alive:(mode==="play"), name:(settings.redditName||"Anonymous") };
+        try{ duel.ch.send(JSON.stringify(payload)); }catch{}
+      }
+    }
+
+    VISUALS.shake=Math.max(0, VISUALS.shake - (settings.reduceMotion?80:28)*dt);
+    VISUALS.flash=Math.max(0, VISUALS.flash - (settings.reduceMotion?4.0:1.7)*dt);
+  }
+
+  // =========================
+  // Main loop
+  // =========================
+  let last=performance.now();
+  function loop(now){
+    const dt=Math.min(0.033,(now-last)/1000);
+    last=now;
+
+    if(!paused) update(dt);
+
+    const shake=settings.reduceMotion?0:VISUALS.shake;
+    const ox=shake>0?rand(-shake,shake):0;
+    const oy=shake>0?rand(-shake,shake):0;
+
+    ctx.save();
+    ctx.translate(ox,oy);
+
+    if(mode==="attract"){
+      drawAttractScreen();
+      ctx.restore();
+      // Clip capture mirroring
+      if(clipArmed && recorder){
+        clipCtx.drawImage(canvas,0,0);
+        captureFrameCount++;
+        if(captureFrameCount>=captureMaxFrames){
+          clipArmed=false;
+          recorder.stop();
+          recorder=null;
+        }
+      }
+      requestAnimationFrame(loop);
+      return;
+    }
+
+    drawBackground();
+    drawTerrainAndCities();
+    drawHumans();
+
+    drawGhostPlayback();
+
+    for(const b of bullets) drawBullet(b);
+    drawParticles();
+    for(const e of enemies) drawEnemy(e);
+
+    drawOpponentShip();
+    drawShip();
+
+    ctx.restore();
+
+    drawHUD();
+    if(settings.crt || VISUALS.flash>0) drawScanlinesAndFlash();
+
+    if(paused && mode==="play") drawOverlay("PAUSED","Press P to resume","Press O for Options");
+    if(mode==="gameover"){
+      const badge=computeBadge();
+      drawOverlay("GAME OVER",`Score ${score} · Level ${level} · Rank ${badge}`,"Space/Enter to retry · S submit · Post your score below");
+    }
+
+    // Clip capture mirroring
+    if(clipArmed && recorder){
+      clipCtx.drawImage(canvas,0,0);
+      captureFrameCount++;
+      if(captureFrameCount>=captureMaxFrames){
+        clipArmed=false;
+        recorder.stop();
+        recorder=null;
+      }
+    }
+
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  // =========================
+  // Start / Restart / Submit / Screenshot / Tap replay
+  // =========================
+  addEventListener("keydown",(e)=>{
+    if(mode==="attract" && e.code==="Enter") resetGame({daily:true,timeAttack:true});
+    if(mode==="gameover" && (e.code==="Enter" || e.code==="Space")) quickRestart();
+    if(mode==="gameover" && e.code==="KeyS") openSubmitScore();
+    if(e.code==="KeyX") saveScreenshot();
+  });
+
+  addEventListener("pointerdown",()=>{
+    if(mode==="gameover") quickRestart();
+  },{passive:true});
+
+  // Also “just one more go” audio nudge
+  let goNudge=null;
+  function armNudge(){
+    if(goNudge) clearTimeout(goNudge);
+    goNudge=setTimeout(()=>{
+      if(mode==="gameover"){
+        ensureAudio();
+        beep(420,0.06,"square",0.25);
+      }
+    },1500);
+  }
+  // Simple watcher: if mode becomes gameover, nudge
+  setInterval(()=>{ if(mode==="gameover") armNudge(); }, 600);
+
+  // =========================
+  // Spectator: ?watch=User&seed=YYYYMMDD
+  // =========================
+  if(watchUser){
+    drawer?.classList.add("open");
+    setMpStatus(`Loading ${watchUser}'s ghost for seed ${watchSeed}…`);
+    loadBestGhostForUser(watchUser, watchSeed).then(best=>{
+      if(best?.ghost){
+        ghostPlay=decodeGhost(best.ghost);
+        setMpStatus(`Watching ${watchUser}: ${best.score} (Seed ${best.seed})`);
+        mode="attract";
+      } else {
+        setMpStatus(`No ghost found for ${watchUser} (Seed ${watchSeed}).`);
+      }
+    });
+  }
+
+  // =========================
+  // VS opponent: ?vs=User
+  // =========================
+  if(liveOpponent){
+    pollOpponentScore(liveOpponent.user, dailySeedUTC()).then(v=>{ if(v) liveOpponent.score=v.score; });
+  }
+
+})();
+</script>
+<script>
+const c = document.getElementById("c");
+const ctx = c.getContext("2d");
+
+function resize(){
+  c.width = innerWidth;
+  c.height = innerHeight;
+}
+addEventListener("resize", resize);
+resize();
+
+ctx.fillStyle = "#cfe0ff";
+ctx.font = "36px system-ui";
+ctx.fillText("Defender Deluxe scaffold loaded", 50, 80);
+ctx.font = "18px system-ui";
+ctx.fillText("Paste the full game engine script to activate the game.", 50, 120);
+</script>
+
+</body>
+</html>
