@@ -1,0 +1,40 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#03040a"/>
+      <stop offset="100%" stop-color="#0b1230"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="7" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bg)"/>
+
+  <g fill="#cfe0ff" opacity="0.65">
+    <circle cx="120" cy="90" r="2"/>
+    <circle cx="320" cy="220" r="1.5"/>
+    <circle cx="680" cy="140" r="2"/>
+    <circle cx="980" cy="300" r="1.5"/>
+    <circle cx="540" cy="420" r="2"/>
+    <circle cx="1040" cy="120" r="2"/>
+    <circle cx="860" cy="520" r="2"/>
+  </g>
+
+  <path d="M0 500 Q200 470 400 500 T800 500 T1200 500 L1200 630 L0 630 Z" fill="#0e1538"/>
+
+  <g transform="translate(520 280) rotate(-10)" stroke="#dff3ff" stroke-width="5" fill="none" filter="url(#glow)">
+    <path d="M44 0 L-34 -20 L-12 0 L-34 20 Z"/>
+    <circle cx="10" cy="0" r="4" stroke="#9dffea"/>
+  </g>
+
+  <circle cx="740" cy="260" r="30" fill="none" stroke="#ff6ad5" stroke-width="7" filter="url(#glow)"/>
+
+  <text x="80" y="150" fill="#ffffff" font-size="92" font-family="Arial Black, sans-serif">DEFENDER</text>
+  <text x="80" y="230" fill="#9dffea" font-size="72" font-family="Arial Black, sans-serif">DELUXE</text>
+  <text x="80" y="290" fill="#cfe0ff" font-size="30" font-family="Arial, sans-serif">Daily Challenge · Leaderboard · Pure Canvas</text>
+</svg>
