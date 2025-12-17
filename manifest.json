@@ -1,0 +1,10 @@
+{
+  "name": "Defender Deluxe",
+  "short_name": "Defender",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#03040a",
+  "theme_color": "#03040a",
+  "description": "A neon-soaked browser remake of Defender: daily challenge & leaderboard.",
+  "icons": []
+}
