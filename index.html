@@ -33,6 +33,70 @@ button{
   margin:2px;
   cursor:pointer;
 }
+  
+.dd-intro {
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(circle at center, rgba(10,20,50,0.85), rgba(0,0,0,0.92));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  transition: opacity 0.6s ease;
+}
+
+.dd-intro.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.dd-intro-inner {
+  text-align: center;
+  color: #e8f3ff;
+  max-width: 520px;
+  padding: 32px 24px;
+  font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+}
+
+.dd-intro h1 {
+  font-size: clamp(42px, 8vw, 64px);
+  letter-spacing: 0.08em;
+  margin-bottom: 20px;
+  text-shadow: 0 0 24px rgba(120,180,255,0.8);
+}
+
+.dd-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  gap: 10px 24px;
+  justify-content: center;
+  margin: 24px auto;
+  font-size: 16px;
+}
+
+.dd-controls strong {
+  color: #9dffea;
+}
+
+.dd-features {
+  margin-top: 20px;
+  font-size: 15px;
+  line-height: 1.6;
+  color: #cfe0ff;
+}
+
+.dd-hint {
+  margin-top: 28px;
+  font-size: 14px;
+  opacity: 0.75;
+  animation: dd-pulse 1.6s infinite;
+}
+
+@keyframes dd-pulse {
+  0% { opacity: 0.4; }
+  50% { opacity: 0.9; }
+  100% { opacity: 0.4; }
+    }
 </style>
 </head>
 
@@ -1630,24 +1694,67 @@ Notes:
   }
 
 })();
+  
+(function introOverlay() {
+  const KEY = "dd_intro_seen";
+  const intro = document.getElementById("dd-intro");
+  if (!intro) return;
+
+  // Only show once
+  if (localStorage.getItem(KEY)) return;
+
+  // Show overlay
+  intro.classList.remove("hidden");
+
+  function dismiss() {
+    intro.classList.add("hidden");
+    localStorage.setItem(KEY, "1");
+    cleanup();
+  }
+
+  function cleanup() {
+    window.removeEventListener("keydown", dismiss);
+    window.removeEventListener("pointerdown", dismiss);
+  }
+
+  // Auto-dismiss after 6 seconds
+  const timer = setTimeout(dismiss, 6000);
+
+  window.addEventListener("keydown", () => {
+    clearTimeout(timer);
+    dismiss();
+  }, { once: true });
+
+  window.addEventListener("pointerdown", () => {
+    clearTimeout(timer);
+    dismiss();
+  }, { once: true });
+})();
 </script>
-<script>
-const c = document.getElementById("c");
-const ctx = c.getContext("2d");
 
-function resize(){
-  c.width = innerWidth;
-  c.height = innerHeight;
-}
-addEventListener("resize", resize);
-resize();
+<div id="dd-intro" class="dd-intro hidden">
+  <div class="dd-intro-inner">
+    <h1>DEFENDER&nbsp;DELUXE</h1>
 
-ctx.fillStyle = "#cfe0ff";
-ctx.font = "36px system-ui";
-ctx.fillText("Defender Deluxe scaffold loaded", 50, 80);
-ctx.font = "18px system-ui";
-ctx.fillText("Paste the full game engine script to activate the game.", 50, 120);
-</script>
+    <div class="dd-controls">
+      <div><strong>← →</strong> Rotate</div>
+      <div><strong>↑</strong> Thrust</div>
+      <div><strong>Space</strong> Fire</div>
+      <div><strong>Shift</strong> Hyperspace</div>
+      <div><strong>B</strong> Smart Bomb</div>
+    </div>
 
+    <div class="dd-features">
+      🎯 Beat today’s target<br>
+      👻 Watch top ghosts<br>
+      ⚔️ Challenge another Redditor
+    </div>
+
+    <div class="dd-hint">
+      Press any key or tap to begin
+    </div>
+  </div>
+</div>  
+  
 </body>
 </html>
